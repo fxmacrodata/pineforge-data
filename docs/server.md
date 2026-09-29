@@ -54,7 +54,7 @@ concurrent misses for one key are deduplicated.
 
 | Environment variable | Default | Meaning |
 |---|---:|---|
-| `PINEFORGE_SERVER_CACHE_DIR` | `/cache` | compiled artifact directory |
+| `PINEFORGE_SERVER_CACHE_DIR` | `/cache` in the image | compiled artifact directory |
 | `PINEFORGE_SERVER_CACHE_MAX_ENTRIES` | `1024` | maximum retained `.so` files |
 | `PINEFORGE_SERVER_CACHE_MAX_BYTES` | `2147483648` | maximum retained bytes |
 

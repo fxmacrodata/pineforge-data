@@ -92,8 +92,9 @@ source values:
 
 ISO-8601 values with an offset or `Z` are unambiguous. Naive text or database
 datetimes use `timestamp_timezone`, which defaults to `UTC` and accepts an IANA
-zone such as `America/New_York`. Values that cannot be represented exactly at
-millisecond precision fail rather than being rounded silently.
+zone such as `America/New_York`. Numeric values that cannot be represented
+exactly at millisecond precision fail rather than being rounded silently;
+ISO-8601 text and date/datetime values are truncated to whole milliseconds.
 
 ## Symbol behavior
 
@@ -124,7 +125,7 @@ Tabular providers:
 - apply `limit` after normalization;
 - reject duplicate timestamps for the requested symbol and timeframe;
 - reject missing or non-finite values, invalid OHLC relationships, negative
-  volume, and lossy sub-millisecond timestamps;
+  volume, and lossy sub-millisecond numeric timestamps;
 - attach the requested instrument and provider source to every `Bar`.
 
 Rows are assumed to be confirmed snapshots because local files and databases

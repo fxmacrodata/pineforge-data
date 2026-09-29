@@ -41,7 +41,7 @@ from pineforge_data import BarRequest, CcxtProvider
 
 
 async def main() -> None:
-    async with CcxtProvider("kraken") as provider:
+    async with CcxtProvider("bitstamp") as provider:
         listing = await provider.resolve_market("BTC/USD")
         instrument = listing.instrument
         bars = await provider.fetch_bars(
@@ -67,7 +67,7 @@ excludes a candle that was not closed at the request's observation time.
 .venv/bin/pineforge-backtest \
   --pine strategy.pine \
   --provider ccxt \
-  --venue kraken \
+  --venue bitstamp \
   --symbol BTC/USD \
   --timeframe 15m \
   --start 2025-07-01T00:00:00Z \
@@ -89,7 +89,7 @@ export PINEFORGE_SERVER_URL=http://127.0.0.1:8000
 export PINEFORGE_SERVER_API_KEY=change-me
 .venv/bin/pineforge-backtest \
   --pine strategy.pine \
-  --venue kraken \
+  --venue bitstamp \
   --symbol BTC/USD \
   --timeframe 15m \
   --start 2025-07-01T00:00:00Z \

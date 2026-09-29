@@ -1,16 +1,16 @@
 # PineForge Data documentation
 
-PineForge Data connects external market and macro providers to deterministic
+PineForge Data connects external market data providers to deterministic
 PineForge backtests. It owns provider transport, market discovery, normalized
 records, data provenance, and the local or remote handoff to
 `pineforge-release`.
 
 ```text
-exchange / broker / macro API
+exchange / CSV / database
              ↓
       Python provider adapter
              ↓
- normalized market + bars + trades
+ normalized market + bars
              ↓
  local pineforge-release or FastAPI server
              ↓
