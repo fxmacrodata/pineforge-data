@@ -18,7 +18,15 @@ from .models import Bar, Instrument
 JsonScalar: TypeAlias = str | int | float | bool | None
 JsonValue: TypeAlias = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
 
-EXPECTED_PF_ABI = 2
+EXPECTED_PF_ABI = 4
+# The engine releases behind each refused pre-1.0 C ABI, and the way forward.
+_REFUSED_ABI_HINTS = {
+    2: (
+        "engine v0.10.2 to v0.12.3 built it: rebuild the strategy with engine 1.x, "
+        "or read it with pineforge-data 0.2.0"
+    ),
+    3: "engine v0.13.0 to v0.13.1 built it: rebuild the strategy with engine 1.x",
+}
 
 
 class EngineBacktestError(RuntimeError):
@@ -64,7 +72,14 @@ class BacktestOptions:
 
 @dataclass(frozen=True, slots=True)
 class BacktestReport:
-    """A detached, JSON-safe copy of ``pf_report_t``."""
+    """A detached, JSON-safe copy of ``pf_report_t``.
+
+    Each trade's ``max_runup`` and ``max_drawdown`` are the whole-trade favorable
+    and adverse excursions in account currency, net of entry fees. A trade whose
+    ``open_at_end`` is true closes a position that was still open after the final
+    bar, at that bar's close rounded to the tick size, without slippage;
+    ``summary["total_trades"]`` counts it.
+    """
 
     summary: Mapping[str, JsonValue]
     metrics: Mapping[str, Mapping[str, JsonValue]]
@@ -95,12 +110,14 @@ class _PfTrade(ctypes.Structure):
         ("pnl", ctypes.c_double),
         ("pnl_pct", ctypes.c_double),
         ("is_long", ctypes.c_int),
+        # Whole-trade excursions in account currency, net of entry fees.
         ("max_runup", ctypes.c_double),
         ("max_drawdown", ctypes.c_double),
         ("qty", ctypes.c_double),
         ("commission", ctypes.c_double),
         ("entry_bar_index", ctypes.c_int32),
         ("exit_bar_index", ctypes.c_int32),
+        ("open_at_end", ctypes.c_int32),
     ]
 
 
@@ -147,6 +164,8 @@ class _PfEquityStats(ctypes.Structure):
         ("max_equity_runup_pct", ctypes.c_double),
         ("buy_hold_return", ctypes.c_double),
         ("buy_hold_return_pct", ctypes.c_double),
+        # pineforge.h 1.0 names these sharpe_monthly and sortino_monthly at the
+        # same offsets (48 and 56); the report keys stay sharpe_tv and sortino_tv.
         ("sharpe_tv", ctypes.c_double),
         ("sortino_tv", ctypes.c_double),
         ("sharpe_bar", ctypes.c_double),
@@ -221,6 +240,10 @@ class _PfReport(ctypes.Structure):
         ("metrics", _PfMetrics),
         ("equity_curve", ctypes.POINTER(_PfEquityPoint)),
         ("equity_curve_len", ctypes.c_int64),
+        # Per-script-bar broker-state hash (ABI 4). report_free releases it;
+        # BacktestReport does not copy it.
+        ("broker_state_hash", ctypes.POINTER(ctypes.c_uint64)),
+        ("broker_state_hash_len", ctypes.c_int64),
     ]
 
 
@@ -299,7 +322,16 @@ def _decode(value: bytes | None) -> str:
 
 
 class PineForgeBacktestRunner:
-    """Thin owner-safe wrapper around one compiled PineForge strategy library."""
+    """Thin owner-safe wrapper around one compiled PineForge strategy library.
+
+    The library must report PineForge C ABI 4, which engine 1.x builds; like the
+    release image's own harness, the runner requires the exact ABI that
+    ``pineforge.h`` asks every caller to check. Libraries that report ABI 2
+    (engine v0.10.2 to v0.12.3) or ABI 3 (engine v0.13.x) are refused with
+    ``EngineBacktestError`` before any strategy call. An ABI 2 trade row lacks
+    ``open_at_end`` and is 8 bytes shorter, so every row after the first would be
+    misread; an ABI 3 report lacks the broker-state hash.
+    """
 
     def __init__(self, library: ctypes.CDLL) -> None:
         self._library = library
@@ -322,12 +354,17 @@ class PineForgeBacktestRunner:
             actual = int(self._library.pf_abi_version())
         except AttributeError as exc:
             raise EngineBacktestError(
-                "strategy library predates pf_abi_version; rebuild it with the current engine"
+                "strategy library predates pf_abi_version (engine v0.10.1 or earlier); "
+                "rebuild it with engine 1.x"
             ) from exc
         if actual != EXPECTED_PF_ABI:
-            raise EngineBacktestError(
+            message = (
                 f"PineForge ABI mismatch: strategy reports {actual}, expected {EXPECTED_PF_ABI}"
             )
+            hint = _REFUSED_ABI_HINTS.get(actual)
+            if hint is None and actual > EXPECTED_PF_ABI:
+                hint = "a newer engine built it: upgrade pineforge-data"
+            raise EngineBacktestError(f"{message}; {hint}" if hint else message)
 
     def _configure_signatures(self) -> None:
         library = self._library
@@ -496,6 +533,7 @@ class PineForgeBacktestRunner:
                     "commission": _json_number(trade.commission),
                     "entry_bar_index": trade.entry_bar_index,
                     "exit_bar_index": trade.exit_bar_index,
+                    "open_at_end": bool(trade.open_at_end),
                 }
             )
 
@@ -548,5 +586,9 @@ class PineForgeBacktestRunner:
         )
 
 
-if ctypes.sizeof(_PfReport) != 944 or _PfReport.metrics.offset != 160:
+if (
+    ctypes.sizeof(_PfReport) != 960
+    or _PfReport.metrics.offset != 160
+    or ctypes.sizeof(_PfTrade) != 104
+):
     raise RuntimeError("unsupported platform ABI layout for PineForge reports")

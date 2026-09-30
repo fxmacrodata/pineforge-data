@@ -64,8 +64,9 @@ and `generated_cpp_sha256`.
 
 ## Runtime channel
 
-The Dockerfile defaults to a semver-and-digest-pinned release image. Override it
-at build time for a rolling development server:
+The Dockerfile defaults to a semver-and-digest-pinned release image: 1.0.0
+(engine 1.0.0, codegen 1.0.0). Override it at build time for a rolling
+development server:
 
 ```bash
 docker build -f docker/server.Dockerfile \
@@ -73,8 +74,8 @@ docker build -f docker/server.Dockerfile \
   -t pineforge-data-server:latest .
 ```
 
-To pin release 1.0.0 (engine 1.0.0, codegen 1.0.0) instead, pass
-`--build-arg PINEFORGE_RELEASE_IMAGE=ghcr.io/pineforge-4pass/pineforge-release:1.0.0@sha256:b271873d0e91a9eeeb4595daaded9bdfbdbcd3925d3ec1300a833395e2004c86`.
+To build on the previous release, 0.1.12 (engine 0.11.0, codegen 0.9.0), pass
+`--build-arg PINEFORGE_RELEASE_IMAGE=ghcr.io/pineforge-4pass/pineforge-release:0.1.12@sha256:312b9d908390b828484617472c749d5815feb75507da87eae2f6902cfe3d47b1`.
 
 Do not use the rolling channel for reproducibility-sensitive production runs.
 The cache key includes component/release identity, so a runtime upgrade cannot

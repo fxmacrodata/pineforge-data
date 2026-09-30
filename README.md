@@ -100,10 +100,11 @@ pineforge-backtest \
   --pretty
 ```
 
-The first run pulls the digest-pinned `pineforge-release` 0.1.12 image (engine
-0.11.0, codegen 0.9.0). Release 1.0.0 (engine 1.0.0, codegen 1.0.0) also runs
-this example when its digest-pinned image is passed to `--runtime-image`; see the
-[runtime image policy](https://pineforge-4pass.github.io/pineforge-data/backtesting/#runtime-image-policy).
+The first run pulls the digest-pinned `pineforge-release` 1.0.0 image (engine
+1.0.0, codegen 1.0.0). Results can differ between releases, notably for scripts
+that omit their capital or order size; the
+[runtime image policy](https://pineforge-4pass.github.io/pineforge-data/backtesting/#runtime-image-policy)
+explains why and how to pin another release with `--runtime-image`.
 The JSON report includes trades, performance
 statistics, the equity curve, data provenance, and exact runtime versions. The
 strategy is compiled inside an isolated Docker container; the provider and its

@@ -12,8 +12,8 @@ from .backtest import BacktestOptions, JsonValue
 from .models import Bar, Instrument
 
 DEFAULT_RELEASE_IMAGE = (
-    "ghcr.io/pineforge-4pass/pineforge-release:0.1.12@"
-    "sha256:312b9d908390b828484617472c749d5815feb75507da87eae2f6902cfe3d47b1"
+    "ghcr.io/pineforge-4pass/pineforge-release:1.0.0@"
+    "sha256:b271873d0e91a9eeeb4595daaded9bdfbdbcd3925d3ec1300a833395e2004c86"
 )
 RELEASE_ENTRYPOINT = "/opt/pineforge/bin/entrypoint.sh"
 RESPONSE_SCHEMA_VERSION = 1
@@ -88,7 +88,7 @@ def release_environment(
     """Translate PineForge options into the release entrypoint environment."""
 
     if options.trace_enabled:
-        raise ReleaseContractError("pineforge-release 0.1.12 does not expose trace collection")
+        raise ReleaseContractError("pineforge-release 1.0.0 does not expose trace collection")
     if options.bar_magnifier and options.magnifier_samples < 2:
         raise ReleaseContractError("bar magnifier requires at least two samples")
     environment = {

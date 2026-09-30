@@ -15,7 +15,7 @@ def test_default_runtime_is_a_digest_pinned_release_image() -> None:
     runtime = DockerBacktestRuntime()
 
     assert runtime.resolved_image() == DEFAULT_RELEASE_IMAGE
-    assert "pineforge-release:0.1.12@sha256:" in runtime.resolved_image()
+    assert "pineforge-release:1.0.0@sha256:" in runtime.resolved_image()
 
 
 def test_latest_is_an_explicit_rolling_channel() -> None:

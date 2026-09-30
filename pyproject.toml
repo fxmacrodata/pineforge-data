@@ -46,7 +46,7 @@ server = [
 ]
 release = [
     "build>=1.2,<2",
-    "twine>=6.2,<7",
+    "twine>=7,<8",
 ]
 dev = [
     "build>=1.2",
