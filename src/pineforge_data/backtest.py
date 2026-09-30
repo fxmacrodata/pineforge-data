@@ -77,7 +77,8 @@ class BacktestReport:
     Each trade's ``max_runup`` and ``max_drawdown`` are the whole-trade favorable
     and adverse excursions in account currency, net of entry fees. A trade whose
     ``open_at_end`` is true closes a position that was still open after the final
-    bar, at that bar's close; ``summary["total_trades"]`` counts it.
+    bar, at that bar's close rounded to the tick size, without slippage;
+    ``summary["total_trades"]`` counts it.
     """
 
     summary: Mapping[str, JsonValue]
@@ -353,13 +354,16 @@ class PineForgeBacktestRunner:
             actual = int(self._library.pf_abi_version())
         except AttributeError as exc:
             raise EngineBacktestError(
-                "strategy library predates pf_abi_version; rebuild it with the current engine"
+                "strategy library predates pf_abi_version (engine v0.10.1 or earlier); "
+                "rebuild it with engine 1.x"
             ) from exc
         if actual != EXPECTED_PF_ABI:
             message = (
                 f"PineForge ABI mismatch: strategy reports {actual}, expected {EXPECTED_PF_ABI}"
             )
             hint = _REFUSED_ABI_HINTS.get(actual)
+            if hint is None and actual > EXPECTED_PF_ABI:
+                hint = "a newer engine built it: upgrade pineforge-data"
             raise EngineBacktestError(f"{message}; {hint}" if hint else message)
 
     def _configure_signatures(self) -> None:

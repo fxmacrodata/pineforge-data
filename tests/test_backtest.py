@@ -140,8 +140,12 @@ def test_runner_surfaces_engine_error_and_releases_owners() -> None:
 
 
 def test_runner_rejects_abi_mismatch_and_unsorted_bars() -> None:
-    with pytest.raises(EngineBacktestError, match="ABI mismatch"):
+    with pytest.raises(EngineBacktestError, match=r"ABI mismatch.*upgrade pineforge-data"):
         PineForgeBacktestRunner(cast(ctypes.CDLL, FakeBacktestLibrary(abi=99)))
+    unversioned = FakeBacktestLibrary()
+    del unversioned.pf_abi_version
+    with pytest.raises(EngineBacktestError, match=r"predates pf_abi_version.*engine 1\.x"):
+        PineForgeBacktestRunner(cast(ctypes.CDLL, unversioned))
 
     runner = PineForgeBacktestRunner(cast(ctypes.CDLL, FakeBacktestLibrary()))
     with pytest.raises(ValueError, match="strictly increasing"):

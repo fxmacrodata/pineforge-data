@@ -148,6 +148,14 @@ Results can differ between releases: the README quick start reports 89 trades
 on 1.0.0 and 88 on 0.1.12. The first 88 are the same trades; 1.0.0 adds the
 close of the position still open after the last bar, marked `open_at_end`.
 
+Order sizes differ too when a script omits `initial_capital`,
+`default_qty_type` or `default_qty_value`. Codegen 1.0 gives them TradingView's
+Pine v6 defaults: 100000, `strategy.percent_of_equity` and 100. Release 0.1.12
+used 1000000, `strategy.fixed` and 1. At 100% of equity, the default 100% margin
+refuses an entry that fills above its signal price, so such a script can trade
+less on 1.0.0. Declare all three settings, as the README strategy does, to size
+orders the same way on both releases.
+
 The rolling channel is explicit:
 
 ```bash
