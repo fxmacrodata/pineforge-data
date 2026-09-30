@@ -16,7 +16,7 @@ from pineforge_data import (
     Instrument,
     PineForgeBacktestRunner,
 )
-from pineforge_data.backtest import _PfEquityPoint, _PfReport, _PfTrade
+from pineforge_data.backtest import _PfEquityPoint, _PfEquityStats, _PfReport, _PfTrade
 from pineforge_data.cli.backtest import (
     build_parser,
     ccxt_timeframe_to_pine,
@@ -44,7 +44,7 @@ class FakeFunction:
 
 
 class FakeBacktestLibrary:
-    def __init__(self, *, abi: int = 2, error: bytes = b"") -> None:
+    def __init__(self, *, abi: int = 4, error: bytes = b"") -> None:
         self.pf_abi_version = FakeFunction(abi)
         self.strategy_create = FakeFunction(123)
         self.strategy_free = FakeFunction()
@@ -58,7 +58,7 @@ class FakeBacktestLibrary:
         self.strategy_set_trade_start_time = FakeFunction()
         self.run_backtest_full = FakeFunction(callback=self._fill_report)
         self._trades = (_PfTrade * 1)(
-            _PfTrade(1_000, 2_000, 10.0, 12.0, 20.0, 20.0, 1, 2.5, 0.5, 10.0, 0.0, 0, 1)
+            _PfTrade(1_000, 2_000, 10.0, 12.0, 20.0, 20.0, 1, 25.0, 5.0, 10.0, 0.0, 0, 1, 1)
         )
         self._equity = (_PfEquityPoint * 2)(
             _PfEquityPoint(1_000, 10_000.0, 0.0),
@@ -115,6 +115,9 @@ def test_runner_returns_detached_json_safe_report() -> None:
     assert payload["summary"]["net_profit"] == 20.0  # type: ignore[index]
     assert payload["metrics"]["all"]["profit_factor"] is None  # type: ignore[index]
     assert payload["trades"][0]["is_long"] is True  # type: ignore[index]
+    assert payload["trades"][0]["open_at_end"] is True  # type: ignore[index]
+    assert payload["trades"][0]["max_runup"] == 25.0  # type: ignore[index]
+    assert payload["trades"][0]["max_drawdown"] == 5.0  # type: ignore[index]
     assert len(payload["equity_curve"]) == 2  # type: ignore[arg-type]
     json.dumps(payload, allow_nan=False)
     assert len(fake.report_free.calls) == 1
@@ -143,6 +146,35 @@ def test_runner_rejects_abi_mismatch_and_unsorted_bars() -> None:
     runner = PineForgeBacktestRunner(cast(ctypes.CDLL, FakeBacktestLibrary()))
     with pytest.raises(ValueError, match="strictly increasing"):
         runner.run(list(reversed(bars())), instrument=bars()[0].instrument)
+
+
+@pytest.mark.parametrize(("abi", "engine"), [(2, "v0.10.2 to v0.12.3"), (3, "v0.13")])
+def test_runner_refuses_pre_1_0_libraries_with_a_rebuild_hint(abi: int, engine: str) -> None:
+    fake = FakeBacktestLibrary(abi=abi)
+
+    with pytest.raises(EngineBacktestError, match=f"strategy reports {abi}, expected 4") as error:
+        PineForgeBacktestRunner(cast(ctypes.CDLL, fake))
+
+    assert engine in str(error.value)
+    assert "rebuild" in str(error.value)
+    assert fake.strategy_create.calls == []
+
+
+def test_report_structures_match_pineforge_abi_4_layout() -> None:
+    # Offsets and sizes measured by the C compiler against engine v1.0.0's
+    # include/pineforge/pineforge.h (LP64).
+    assert ctypes.sizeof(_PfTrade) == 104
+    assert _PfTrade.exit_bar_index.offset == 92
+    assert _PfTrade.open_at_end.offset == 96
+    assert _PfEquityStats.sharpe_tv.offset == 48
+    assert _PfEquityStats.sortino_tv.offset == 56
+    assert ctypes.sizeof(_PfEquityStats) == 120
+    assert ctypes.sizeof(_PfReport) == 960
+    assert _PfReport.metrics.offset == 160
+    assert _PfReport.equity_curve.offset == 928
+    assert _PfReport.equity_curve_len.offset == 936
+    assert _PfReport.broker_state_hash.offset == 944
+    assert _PfReport.broker_state_hash_len.offset == 952
 
 
 @pytest.mark.parametrize(
