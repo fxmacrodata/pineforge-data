@@ -46,7 +46,7 @@ from pineforge_data import BarRequest, CcxtProvider
 
 
 async def main() -> None:
-    async with CcxtProvider("kraken") as provider:
+    async with CcxtProvider("bitstamp") as provider:
         market = await provider.resolve_market("BTC/USD")
         bars = await provider.fetch_bars(
             BarRequest(
@@ -72,7 +72,7 @@ Save a strategy as `strategy.pine`:
 
 ```pinescript
 //@version=6
-strategy("SMA cross", initial_capital=10000)
+strategy("SMA cross", initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=10)
 
 fast = ta.sma(close, 2)
 slow = ta.sma(close, 4)
@@ -90,7 +90,7 @@ Then run:
 pineforge-backtest \
   --pine strategy.pine \
   --provider ccxt \
-  --venue kraken \
+  --venue bitstamp \
   --symbol BTC/USD \
   --timeframe 15m \
   --start 2025-07-01T00:00:00Z \
@@ -100,10 +100,14 @@ pineforge-backtest \
   --pretty
 ```
 
-The first run pulls a digest-pinned `pineforge-release` image. The JSON report
-includes trades, performance statistics, the equity curve, data provenance,
-and exact runtime versions. The strategy is compiled inside an isolated Docker
-container; the provider and its credentials remain on the host.
+The first run pulls the digest-pinned `pineforge-release` 0.1.12 image (engine
+0.11.0, codegen 0.9.0). Release 1.0.0 (engine 1.0.0, codegen 1.0.0) also runs
+this example when its digest-pinned image is passed to `--runtime-image`; see the
+[runtime image policy](https://pineforge-4pass.github.io/pineforge-data/backtesting/#runtime-image-policy).
+The JSON report includes trades, performance
+statistics, the equity curve, data provenance, and exact runtime versions. The
+strategy is compiled inside an isolated Docker container; the provider and its
+credentials remain on the host.
 
 ## Bring your own data
 
@@ -115,7 +119,7 @@ and accept an explicit mapping when your schema uses different names.
 |---|---|---|
 | CSV | `pip install pineforge-data` | [CSV API](https://pineforge-4pass.github.io/pineforge-data/providers/csv/) |
 | SQLite | `pip install pineforge-data` | [SQLite API](https://pineforge-4pass.github.io/pineforge-data/providers/sqlite/) |
-| SQLAlchemy database | `pip install 'pineforge-data[database]'` | [SQLAlchemy API](https://pineforge-4pass.github.io/pineforge-data/providers/sqlalchemy/) |
+| SQLAlchemy database | `pip install 'pineforge-data[database]'` plus a database driver | [SQLAlchemy API](https://pineforge-4pass.github.io/pineforge-data/providers/sqlalchemy/) |
 | CCXT exchange | `pip install 'pineforge-data[ccxt]'` | [CCXT API](https://pineforge-4pass.github.io/pineforge-data/providers/ccxt/) |
 
 The same `pineforge-backtest` command supports `--provider csv`, `sqlite`, and

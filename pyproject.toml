@@ -5,12 +5,12 @@ build-backend = "hatchling.build"
 [project]
 name = "pineforge-data"
 version = "0.2.0"
-description = "Provider-neutral market and macro data adapters for PineForge"
+description = "Provider-neutral market data adapters and raw-PineScript backtest harness for PineForge"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
 authors = [{ name = "PineForge contributors" }]
-keywords = ["pinescript", "backtesting", "market-data", "macro-data"]
+keywords = ["pinescript", "backtesting", "market-data"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "License :: OSI Approved :: Apache Software License",

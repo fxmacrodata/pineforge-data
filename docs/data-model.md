@@ -61,8 +61,8 @@ swap = Instrument(
 ```
 
 `ContractSpec` can also carry `expiry_ms`, `strike`, and `option_type`. A
-contract cannot be both linear and inverse, and numeric contract terms must be
-finite and positive.
+contract cannot be both linear and inverse, and contract size and strike must
+be finite and positive.
 
 ## Market listings and discovery
 

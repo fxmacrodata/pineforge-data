@@ -29,7 +29,7 @@ are documented in the [server guide](server.md).
 pineforge-backtest \
   --pine strategy.pine \
   --provider ccxt \
-  --venue kraken \
+  --venue bitstamp \
   --symbol BTC/USD \
   --timeframe 15m \
   --start 2025-07-01T00:00:00Z \
@@ -60,7 +60,7 @@ strategy to place orders during that earlier interval:
 pineforge-backtest \
   --pine strategy.pine \
   --provider ccxt \
-  --venue kraken \
+  --venue bitstamp \
   --symbol BTC/USD \
   --timeframe 15m \
   --start 2025-07-01T00:00:00Z \
@@ -132,9 +132,20 @@ guides.
 
 ## Runtime image policy
 
-The package default is an exact `pineforge-release` version and OCI digest. The
-`missing` pull policy downloads it only when absent; `never` supports offline
-runs; `always` refreshes a tag before running.
+The package default is an exact `pineforge-release` version and OCI digest:
+0.1.12, which bundles engine 0.11.0 and codegen 0.9.0. The `missing` pull
+policy downloads it only when absent; `never` supports offline runs; `always`
+refreshes a tag before running.
+
+Release 1.0.0 bundles engine 1.0.0 and codegen 1.0.0 and accepts the same
+inputs. To use it, pin it by digest:
+
+```bash
+--runtime-image ghcr.io/pineforge-4pass/pineforge-release:1.0.0@sha256:b271873d0e91a9eeeb4595daaded9bdfbdbcd3925d3ec1300a833395e2004c86
+```
+
+Results can differ between releases: the README quick start reports 88 trades
+on 0.1.12 and 89 on 1.0.0.
 
 The rolling channel is explicit:
 
@@ -155,13 +166,13 @@ The harness combines provider provenance with the release report:
   "schema_version": 1,
   "request_id": null,
   "provider": {
-    "name": "ccxt:kraken",
+    "name": "ccxt:bitstamp",
     "adapter": "ccxt",
-    "venue": "kraken",
+    "venue": "bitstamp",
     "source_timeframe": "15m",
     "market": {
       "symbol": "BTC/USD",
-      "provider_id": "XXBTZUSD",
+      "provider_id": "btcusd",
       "market_type": "spot",
       "contract": null
     }
@@ -169,14 +180,19 @@ The harness combines provider provenance with the release report:
   "data": {
     "requested_start_ms": 1751328000000,
     "requested_end_ms": 1751932800000,
-    "provider_start_ms": 1746828000000,
-    "first_bar_ms": 1746828000000,
+    "provider_start_ms": 1750878000000,
+    "first_bar_ms": 1750878000000,
     "last_bar_ms": 1751931900000,
     "bars": 1172,
     "requested_bars": 672,
     "warmup_bars_requested": 500,
     "warmup_bars_loaded": 500,
     "trade_start_time_ms": 1751328000000
+  },
+  "strategy": {
+    "pine": "/path/to/strategy.pine",
+    "input_timeframe": "15",
+    "script_timeframe": "15"
   },
   "runtime": {
     "mode": "local-container",

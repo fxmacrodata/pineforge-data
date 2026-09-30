@@ -160,7 +160,7 @@ pineforge-backtest \
   --pine strategy.pine \
   --provider ccxt \
   --provider-config ccxt.json \
-  --venue kraken \
+  --venue bitstamp \
   --symbol BTC/USD \
   --timeframe 15m \
   --start 2025-07-01T00:00:00Z \
@@ -181,4 +181,5 @@ Python class when endpoint-specific parameters or polling controls are needed.
 
 Public trades currently use REST polling, not CCXT Pro WebSockets. Availability,
 history depth, pagination semantics, and rate limits still depend on the
-selected exchange.
+selected exchange. For example, Kraken serves only its most recent 720 candles
+per timeframe, so an older 15-minute window returns no bars.

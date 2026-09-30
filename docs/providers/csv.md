@@ -45,7 +45,6 @@ complete mapping is preferable.
 ```python
 schema = await provider.inspect_schema()
 print(schema.column_names)
-mapping = schema.infer_bar_mapping({"timestamp": "epoch seconds"})
 ```
 
 The first record must be a non-empty, unique header. Files with duplicate or

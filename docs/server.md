@@ -54,7 +54,7 @@ concurrent misses for one key are deduplicated.
 
 | Environment variable | Default | Meaning |
 |---|---:|---|
-| `PINEFORGE_SERVER_CACHE_DIR` | `/cache` | compiled artifact directory |
+| `PINEFORGE_SERVER_CACHE_DIR` | `/cache` in the image | compiled artifact directory |
 | `PINEFORGE_SERVER_CACHE_MAX_ENTRIES` | `1024` | maximum retained `.so` files |
 | `PINEFORGE_SERVER_CACHE_MAX_BYTES` | `2147483648` | maximum retained bytes |
 
@@ -72,6 +72,9 @@ docker build -f docker/server.Dockerfile \
   --build-arg PINEFORGE_RELEASE_IMAGE=ghcr.io/pineforge-4pass/pineforge-release:latest \
   -t pineforge-data-server:latest .
 ```
+
+To pin release 1.0.0 (engine 1.0.0, codegen 1.0.0) instead, pass
+`--build-arg PINEFORGE_RELEASE_IMAGE=ghcr.io/pineforge-4pass/pineforge-release:1.0.0@sha256:b271873d0e91a9eeeb4595daaded9bdfbdbcd3925d3ec1300a833395e2004c86`.
 
 Do not use the rolling channel for reproducibility-sensitive production runs.
 The cache key includes component/release identity, so a runtime upgrade cannot
