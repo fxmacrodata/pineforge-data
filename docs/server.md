@@ -73,6 +73,9 @@ docker build -f docker/server.Dockerfile \
   -t pineforge-data-server:latest .
 ```
 
+To pin release 1.0.0 (engine 1.0.0, codegen 1.0.0) instead, pass
+`--build-arg PINEFORGE_RELEASE_IMAGE=ghcr.io/pineforge-4pass/pineforge-release:1.0.0@sha256:b271873d0e91a9eeeb4595daaded9bdfbdbcd3925d3ec1300a833395e2004c86`.
+
 Do not use the rolling channel for reproducibility-sensitive production runs.
 The cache key includes component/release identity, so a runtime upgrade cannot
 reuse a compiled artifact from a different engine version.

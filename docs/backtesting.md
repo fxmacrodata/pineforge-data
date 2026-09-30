@@ -137,6 +137,16 @@ The package default is an exact `pineforge-release` version and OCI digest:
 policy downloads it only when absent; `never` supports offline runs; `always`
 refreshes a tag before running.
 
+Release 1.0.0 bundles engine 1.0.0 and codegen 1.0.0 and accepts the same
+inputs. To use it, pin it by digest:
+
+```bash
+--runtime-image ghcr.io/pineforge-4pass/pineforge-release:1.0.0@sha256:b271873d0e91a9eeeb4595daaded9bdfbdbcd3925d3ec1300a833395e2004c86
+```
+
+Results can differ between releases: the README quick start reports 88 trades
+on 0.1.12 and 89 on 1.0.0.
+
 The rolling channel is explicit:
 
 ```bash
