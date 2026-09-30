@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import time
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, cast
@@ -29,10 +30,11 @@ pytestmark = pytest.mark.skipif(
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def fixture_values() -> tuple[str, Instrument, list[Bar]]:
+def fixture_values(
+    closes: Sequence[int] = (10, 11, 12, 13, 12, 11, 10, 9) * 3,
+) -> tuple[str, Instrument, list[Bar]]:
     pine = (ROOT / "tests/fixtures/sma_cross.pine").read_text(encoding="utf-8")
     instrument = Instrument("TEST/USD", venue="fixture")
-    closes = [10, 11, 12, 13, 12, 11, 10, 9] * 3
     bars = [
         Bar(
             instrument,
@@ -65,6 +67,7 @@ def test_local_runtime_uses_published_release_image() -> None:
     summary = cast(dict[str, object], backtest["summary"])
     assert runtime["mode"] == "local-container"
     assert "pineforge-release:1.0.0@sha256:" in cast(str, runtime["release_image"])
+    assert (runtime["engine_version"], runtime["codegen_version"]) == ("1.0.0", "1.0.0")
     assert summary["bars_processed"] == len(bars)
 
 
@@ -72,64 +75,54 @@ def test_local_runtime_uses_published_release_image() -> None:
 def in_process_check(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
     """Compile the SMA fixture in the release image and read it both ways."""
 
-    pine, instrument, _ = fixture_values()
     # A rising tail opens a long that is still open after the final bar, so the
     # report ends with a range-end (open_at_end) row.
-    closes = [10, 11, 12, 13, 12, 11, 10, 9] * 3 + [10, 11, 12, 13]
-    bars = [
-        Bar(
-            instrument,
-            1_700_000_000_000 + index * 60_000,
-            float(close),
-            float(close + 1),
-            float(close - 1),
-            float(close),
-            100.0,
-            "fixture",
-        )
-        for index, close in enumerate(closes)
-    ]
-    workspace = tmp_path_factory.mktemp("in-process") / "in"
-    write_release_inputs(workspace, pine, bars, instrument)
+    pine, instrument, bars = fixture_values((10, 11, 12, 13, 12, 11, 10, 9) * 3 + (10, 11, 12, 13))
+    workspace = tmp_path_factory.mktemp("in-process")
+    write_release_inputs(workspace / "in", pine, bars, instrument)
     image = DockerBacktestRuntime().ensure_image()
-    completed = subprocess.run(
-        [
-            "docker",
-            "run",
-            "--rm",
-            "--network",
-            "none",
-            "--read-only",
-            "--tmpfs",
-            "/tmp:rw,exec,nosuid,nodev,size=512m",
-            "--cap-drop",
-            "ALL",
-            "--security-opt",
-            "no-new-privileges",
-            "--mount",
-            f"type=bind,src={workspace},dst=/in,readonly",
-            "--mount",
-            f"type=bind,src={ROOT / 'src'},dst=/opt/pineforge-data/src,readonly",
-            "--mount",
-            f"type=bind,src={ROOT / 'tests'},dst=/opt/pineforge-data/tests,readonly",
-            "--env",
-            "PYTHONPATH=/opt/pineforge-data/src:/opt/pineforge/pycodegen",
-            "--env",
-            "PYTHONDONTWRITEBYTECODE=1",
-            "--entrypoint",
-            "python3",
-            image,
-            "/opt/pineforge-data/tests/in_process_release_check.py",
-            "--input-tf",
-            "1",
-            "--script-tf",
-            "1",
-        ],
-        text=True,
-        capture_output=True,
-        check=False,
-        timeout=600,
-    )
+    cid_path = workspace / "container.cid"
+    command = [
+        "docker",
+        "run",
+        "--rm",
+        "--cidfile",
+        str(cid_path),
+        "--network",
+        "none",
+        "--read-only",
+        "--tmpfs",
+        "/tmp:rw,exec,nosuid,nodev,size=512m",
+        "--cap-drop",
+        "ALL",
+        "--security-opt",
+        "no-new-privileges",
+        "--mount",
+        f"type=bind,src={workspace / 'in'},dst=/in,readonly",
+        "--mount",
+        f"type=bind,src={ROOT / 'src'},dst=/opt/pineforge-data/src,readonly",
+        "--mount",
+        f"type=bind,src={ROOT / 'tests'},dst=/opt/pineforge-data/tests,readonly",
+        "--env",
+        "PYTHONPATH=/opt/pineforge-data/src:/opt/pineforge/pycodegen",
+        "--env",
+        "PYTHONDONTWRITEBYTECODE=1",
+        "--entrypoint",
+        "python3",
+        image,
+        "/opt/pineforge-data/tests/in_process_release_check.py",
+        "--input-tf",
+        "1",
+        "--script-tf",
+        "1",
+    ]
+    try:
+        completed = subprocess.run(
+            command, text=True, capture_output=True, check=False, timeout=600
+        )
+    except subprocess.TimeoutExpired:
+        DockerBacktestRuntime._remove_timed_out_container(cid_path)
+        raise
     assert completed.returncode == 0, f"in-process check failed:\n{completed.stderr}"
     return cast(dict[str, Any], json.loads(completed.stdout))
 
@@ -137,7 +130,6 @@ def in_process_check(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]
 def test_report_structures_match_the_release_header(in_process_check: dict[str, Any]) -> None:
     layout = in_process_check["layout"]
 
-    assert layout["ctypes"].keys() == layout["c"].keys()
     for name, c_structure in layout["c"].items():
         assert layout["ctypes"][name] == c_structure, name
     assert in_process_check["header_abi"] == in_process_check["library_abi"] == EXPECTED_PF_ABI
@@ -175,8 +167,16 @@ def test_in_process_runner_matches_the_release_harness(in_process_check: dict[st
     summary = in_process["summary"]
     assert summary["total_trades"] == release["summary"]["total_trades"] == len(expected_trades)
     assert summary["net_profit"] == release["summary"]["net_pnl"]
-    assert summary["input_bars_processed"] == release["diagnostics"]["input_bars_processed"]
-    assert summary["script_bars_processed"] == release["diagnostics"]["script_bars_processed"]
+    for key in (
+        "input_bars_processed",
+        "script_bars_processed",
+        "magnifier_sub_bars_total",
+        "magnifier_sample_ticks_total",
+        "bar_magnifier_enabled",
+    ):
+        assert summary[key] == release["diagnostics"][key], key
+    for key in ("input_tf_seconds", "script_tf_seconds", "script_tf_ratio", "needs_aggregation"):
+        assert summary[key] == release["applied_runtime"][key], key
 
 
 def _wait_for_server(container_id: str) -> str:

@@ -6,7 +6,8 @@ This script runs inside the release image with the repository's ``src`` on
 the entrypoint does, and prints one JSON document on stdout:
 
 - ``layout``: every structure ``pineforge_data`` mirrors, as the C compiler lays
-  it out from the image's ``pineforge.h`` (``c``) and as ``ctypes`` does;
+  it out from the image's ``pineforge.h`` (``c``) and as ``ctypes`` does: each
+  member's name, offset, size and scalar kind;
 - ``header_abi`` and ``library_abi``: ``PF_ABI_VERSION`` and the compiled
   library's ``pf_abi_version()``;
 - ``release``: the image's own report (``run_json.py``) for that library;
@@ -65,21 +66,46 @@ C_MEMBERS = {
     ("pf_equity_stats_t", "sharpe_tv"): "sharpe_monthly",
     ("pf_equity_stats_t", "sortino_tv"): "sortino_monthly",
 }
+# Scalar kinds, so that a same-size change of type (signedness, integer versus
+# double, pointer versus integer) fails too. Pointers and nested structures
+# are "other" on both sides; their sizes tell them apart.
+CTYPES_KINDS: dict[object, str] = {
+    ctypes.c_double: "f64",
+    ctypes.c_float: "f32",
+    ctypes.c_int8: "i8",
+    ctypes.c_uint8: "u8",
+    ctypes.c_int16: "i16",
+    ctypes.c_uint16: "u16",
+    ctypes.c_int32: "i32",
+    ctypes.c_uint32: "u32",
+    ctypes.c_int64: "i64",
+    ctypes.c_uint64: "u64",
+}
+C_KIND = (
+    '_Generic((x), double: "f64", float: "f32", signed char: "i8", unsigned char: "u8", '
+    'short: "i16", unsigned short: "u16", int: "i32", unsigned int: "u32", '
+    'long: "i64", unsigned long: "u64", long long: "i64", unsigned long long: "u64", '
+    'default: "other")'
+)
 
 Layout = dict[str, dict[str, object]]
 
 
-def _members(c_name: str, structure: type[ctypes.Structure]) -> list[tuple[str, str]]:
-    return [(name, C_MEMBERS.get((c_name, name), name)) for name, *_ in structure._fields_]
+def _members(c_name: str, structure: type[ctypes.Structure]) -> list[tuple[str, str, object]]:
+    return [
+        (name, C_MEMBERS.get((c_name, name), name), field_type)
+        for name, field_type, *_ in structure._fields_
+    ]
 
 
 def ctypes_layout() -> Layout:
     layout: Layout = {}
     for c_name, structure in MIRRORS:
         fields = []
-        for name, member in _members(c_name, structure):
+        for name, member, field_type in _members(c_name, structure):
             descriptor = getattr(structure, name)
-            fields.append([member, descriptor.offset, descriptor.size])
+            kind = CTYPES_KINDS.get(field_type, "other")
+            fields.append([member, descriptor.offset, descriptor.size, kind])
         layout[c_name] = {"size": ctypes.sizeof(structure), "fields": fields}
     return layout
 
@@ -89,15 +115,17 @@ def c_layout(work: Path) -> tuple[int, Layout]:
         "#include <stddef.h>",
         "#include <stdio.h>",
         "#include <pineforge/pineforge.h>",
+        f"#define KIND(x) {C_KIND}",
         "int main(void) {",
         '    printf("abi %d\\n", PF_ABI_VERSION);',
     ]
     for c_name, structure in MIRRORS:
         lines.append(f'    printf("size {c_name} %zu\\n", sizeof({c_name}));')
-        for _, member in _members(c_name, structure):
+        for _, member, _ in _members(c_name, structure):
             lines.append(
-                f'    printf("field {c_name} {member} %zu %zu\\n", '
-                f"offsetof({c_name}, {member}), sizeof((({c_name} *)0)->{member}));"
+                f'    printf("field {c_name} {member} %zu %zu %s\\n", '
+                f"offsetof({c_name}, {member}), sizeof((({c_name} *)0)->{member}), "
+                f"KIND((({c_name} *)0)->{member}));"
             )
     lines += ["    return 0;", "}"]
     source = work / "layout.c"
@@ -117,10 +145,10 @@ def c_layout(work: Path) -> tuple[int, Layout]:
         elif kind == "size":
             layout[values[0]] = {"size": int(values[1]), "fields": []}
         else:
-            c_name, member, offset, size = values
+            c_name, member, offset, size, kind = values
             fields = layout[c_name]["fields"]
             assert isinstance(fields, list)
-            fields.append([member, int(offset), int(size)])
+            fields.append([member, int(offset), int(size), kind])
     return header_abi, layout
 
 
