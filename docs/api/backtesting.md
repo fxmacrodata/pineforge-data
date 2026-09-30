@@ -8,12 +8,22 @@
 
 ::: pineforge_data.backtest.BacktestReport
 
-`PineForgeBacktestRunner` accepts only strategy libraries that report PineForge
-C ABI 2, which engine releases v0.10.2 through v0.12.3 build. It refuses
-libraries built with engine v0.13.x (ABI 3) or v1.0.0 (ABI 4) with an
-`EngineBacktestError` such as "PineForge ABI mismatch: strategy reports 4,
-expected 2". The release container and the FastAPI server do not use this
-class.
+`PineForgeBacktestRunner` runs a compiled strategy library in-process. It
+accepts libraries that report PineForge C ABI 4, which engine 1.x builds. It
+refuses older libraries before any strategy call, with an `EngineBacktestError`
+that names the engine releases behind their ABI: ABI 2 (engine v0.10.2 through
+v0.12.3) and ABI 3 (engine v0.13.x). Rebuild such a library with engine 1.x;
+pineforge-data 0.2.0 still reads ABI 2. The release container and the FastAPI
+server do not use this class.
+
+A trade's `max_runup` and `max_drawdown` are whole-trade excursions in account
+currency, net of entry fees, as engine 1.0's `pineforge.h` documents them.
+Headers before 1.0 described them as price travel per unit of quantity, but the
+values did not change: on the README quick start, engines 0.11.0 and 1.0.0
+report identical excursions for the 88 trades both report. A trade whose
+`open_at_end` is true closes a position still open after the final bar, at that
+bar's close. Engine 0.11.0 reports no such row, so the README quick start has 88
+trades on it and 89 on engine 1.0.0.
 
 ::: pineforge_data.backtest.PineForgeBacktestRunner
 

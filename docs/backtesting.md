@@ -133,19 +133,20 @@ guides.
 ## Runtime image policy
 
 The package default is an exact `pineforge-release` version and OCI digest:
-0.1.12, which bundles engine 0.11.0 and codegen 0.9.0. The `missing` pull
+1.0.0, which bundles engine 1.0.0 and codegen 1.0.0. The `missing` pull
 policy downloads it only when absent; `never` supports offline runs; `always`
 refreshes a tag before running.
 
-Release 1.0.0 bundles engine 1.0.0 and codegen 1.0.0 and accepts the same
-inputs. To use it, pin it by digest:
+The previous default, release 0.1.12 (engine 0.11.0, codegen 0.9.0), accepts the
+same inputs. To reproduce results made with it, pin it by digest:
 
 ```bash
---runtime-image ghcr.io/pineforge-4pass/pineforge-release:1.0.0@sha256:b271873d0e91a9eeeb4595daaded9bdfbdbcd3925d3ec1300a833395e2004c86
+--runtime-image ghcr.io/pineforge-4pass/pineforge-release:0.1.12@sha256:312b9d908390b828484617472c749d5815feb75507da87eae2f6902cfe3d47b1
 ```
 
-Results can differ between releases: the README quick start reports 88 trades
-on 0.1.12 and 89 on 1.0.0.
+Results can differ between releases: the README quick start reports 89 trades
+on 1.0.0 and 88 on 0.1.12. The first 88 are the same trades; 1.0.0 adds the
+close of the position still open after the last bar, marked `open_at_end`.
 
 The rolling channel is explicit:
 
