@@ -21,6 +21,10 @@ guide for each built-in provider.
 | `sqlite` | Local SQLite table or view | reflected catalog, historical bars | none | [SQLite](providers/sqlite.md) |
 | `sqlalchemy` | SQLAlchemy-supported database table or view | reflected catalog, historical bars | `database` plus a dialect driver | [SQLAlchemy](providers/sqlalchemy.md) |
 
+CSV, SQLite, and SQLAlchemy share runtime schema discovery and arbitrary column
+mapping. Read the [tabular schema mapping](providers/tabular-schema.md) guide
+before configuring one of them.
+
 ## Macro providers
 
 | Provider | Data source | Capabilities | Install extra | API guide |
@@ -29,10 +33,6 @@ guide for each built-in provider.
 
 Macro providers implement `MacroDataProvider` and are constructed directly;
 they are not registry entries for the backtest harness.
-
-CSV, SQLite, and SQLAlchemy share runtime schema discovery and arbitrary column
-mapping. Read the [tabular schema mapping](providers/tabular-schema.md) guide
-before configuring one of them.
 
 ## Shared provider lifecycle
 

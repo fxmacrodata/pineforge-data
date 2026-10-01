@@ -48,6 +48,8 @@
 
 ::: pineforge_data.providers.fxmacrodata.FxMacroDataResponse
 
+::: pineforge_data.providers.fxmacrodata.UrllibTransport
+
 ## Provider errors
 
 ::: pineforge_data.providers.ccxt.CcxtError

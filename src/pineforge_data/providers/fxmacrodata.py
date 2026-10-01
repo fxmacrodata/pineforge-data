@@ -4,17 +4,19 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import warnings
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.message import Message
+from http.client import HTTPMessage
 from math import isfinite
-from typing import Protocol
+from typing import IO, Protocol
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from ..models import MacroObservation
 from ..requests import MacroRequest
@@ -22,6 +24,11 @@ from ..requests import MacroRequest
 FXMACRODATA_API_URL = "https://api.fxmacrodata.com/v1"
 _PAGE_LIMIT = 100
 _RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
+# Snapshot entries repeat the original release time in ``epoch``; only the time
+# FXMacroData observed them says when their value was available.
+_SNAPSHOT_STATUSES = frozenset({"captured_snapshot", "legacy_snapshot"})
+_CURRENCY = re.compile(r"[A-Z]{3}")
+_INDICATOR = re.compile(r"[a-z0-9_]+")
 
 
 class FxMacroDataError(RuntimeError):
@@ -80,16 +87,36 @@ def _decode(body: bytes) -> object:
         return None
 
 
+class _RefuseRedirects(HTTPRedirectHandler):
+    """Surface a 3xx as an HTTP error instead of re-sending headers elsewhere."""
+
+    def redirect_request(
+        self,
+        req: Request,
+        fp: IO[bytes],
+        code: int,
+        msg: str,
+        headers: HTTPMessage,
+        newurl: str,
+    ) -> Request | None:
+        return None
+
+
 class UrllibTransport:
-    """Standard-library transport: no optional dependency is required."""
+    """Standard-library transport: no optional dependency is required.
+
+    Redirects are not followed, so the ``X-API-Key`` header is only ever sent to
+    the configured host; a 3xx response becomes an ``FxMacroDataHTTPError``.
+    """
 
     def __init__(self, timeout_seconds: float) -> None:
         self.timeout_seconds = timeout_seconds
+        self._opener = build_opener(_RefuseRedirects())
 
     def _get(self, url: str, headers: Mapping[str, str]) -> FxMacroDataResponse:
         request = Request(url, headers=dict(headers), method="GET")
         try:
-            with urlopen(request, timeout=self.timeout_seconds) as response:
+            with self._opener.open(request, timeout=self.timeout_seconds) as response:
                 return FxMacroDataResponse(response.status, _decode(response.read()))
         except HTTPError as exc:
             return FxMacroDataResponse(exc.code, _decode(exc.read()), _retry_after(exc.headers))
@@ -150,13 +177,13 @@ def _request_date(timestamp_ms: int) -> str:
 def _available_at_ms(entry: Mapping[str, object], field: str) -> int | None:
     """When the value in ``entry`` is known to have been available.
 
-    A ``captured_snapshot`` was read from the publisher at ``observed_at_ns``;
-    its ``epoch`` repeats the original release time, so using it would date a
-    later revision back to the first release. Source vintages carry their own
-    publication time.
+    A ``captured_snapshot`` or ``legacy_snapshot`` repeats the original release
+    time in ``epoch``, so using it would date a later revision back to the first
+    release; only ``observed_at_ns`` is used for those. Other vintages are dated
+    by ``publication_at_ns``, else ``epoch``.
     """
 
-    if entry.get("vintage_status") == "captured_snapshot":
+    if entry.get("vintage_status") in _SNAPSHOT_STATUSES:
         return _optional_epoch_ms(
             entry.get("observed_at_ns"), f"{field}.observed_at_ns", divisor=1_000_000
         )
@@ -215,6 +242,7 @@ class FxMacroDataProvider:
     code. The provider asks for ``revisions=all`` and emits one observation per
     distinct value a period has had, dated by when that value became available.
 
+    ``source`` is ``fxmacrodata:<publisher>``, for example ``fxmacrodata:BLS``.
     Records without a publication time are skipped rather than given one, and so
     are records whose time FXMacroData derived instead of captured, unless
     ``include_assumed_release_times`` is set. ``last_skipped`` counts the
@@ -229,6 +257,8 @@ class FxMacroDataProvider:
         timeout_seconds: float = 20.0,
         max_retries: int = 2,
         retry_backoff_seconds: float = 1.0,
+        max_retry_after_seconds: float = 60.0,
+        max_pages: int = 1_000,
         include_assumed_release_times: bool = False,
         transport: FxMacroDataTransport | None = None,
     ) -> None:
@@ -240,6 +270,10 @@ class FxMacroDataProvider:
             raise ValueError("max_retries must be non-negative")
         if retry_backoff_seconds < 0:
             raise ValueError("retry_backoff_seconds must be non-negative")
+        if max_retry_after_seconds < 0:
+            raise ValueError("max_retry_after_seconds must be non-negative")
+        if max_pages < 1:
+            raise ValueError("max_pages must be at least 1")
         if api_key is not None and not api_key.strip():
             raise ValueError("api_key must not be empty when supplied")
 
@@ -249,6 +283,8 @@ class FxMacroDataProvider:
         self.timeout_seconds = timeout_seconds
         self.max_retries = max_retries
         self.retry_backoff_seconds = retry_backoff_seconds
+        self.max_retry_after_seconds = max_retry_after_seconds
+        self.max_pages = max_pages
         self.include_assumed_release_times = include_assumed_release_times
         self._transport: FxMacroDataTransport = transport or UrllibTransport(timeout_seconds)
         self.last_skipped: Mapping[str, int] = {}
@@ -272,13 +308,16 @@ class FxMacroDataProvider:
             response = await self._transport.get(url, params=params, headers=self._headers())
             if response.status in _RETRY_STATUSES and attempt < self.max_retries:
                 delay = response.retry_after_seconds
-                if delay is None:
+                if delay is None or delay > self.max_retry_after_seconds:
                     delay = self.retry_backoff_seconds * 2**attempt
                 await asyncio.sleep(delay)
                 attempt += 1
                 continue
             if not 200 <= response.status < 300:
-                raise FxMacroDataHTTPError(response.status, _error_message(response.payload))
+                message = _error_message(response.payload)
+                if self._api_key is not None:
+                    message = message.replace(self._api_key, "[redacted]")
+                raise FxMacroDataHTTPError(response.status, message)
             if not isinstance(response.payload, Mapping):
                 raise FxMacroDataDataError("response must be a JSON object")
             return response.payload
@@ -304,7 +343,7 @@ class FxMacroDataProvider:
         record: Mapping[str, object], released_at_ms: int, skipped: Counter[str]
     ) -> list[tuple[int, float]]:
         revisions = record.get("revisions")
-        if revisions is None:
+        if revisions is None or revisions == []:
             entries: list[tuple[str, Mapping[str, object]]] = [("record", record)]
         elif isinstance(revisions, list):
             entries = []
@@ -321,7 +360,7 @@ class FxMacroDataProvider:
             if value is None:
                 skipped["missing_value"] += 1
                 continue
-            if field == "record" and entry.get("vintage_status") != "captured_snapshot":
+            if field == "record" and entry.get("vintage_status") not in _SNAPSHOT_STATUSES:
                 available_at_ms: int | None = released_at_ms
             else:
                 available_at_ms = _available_at_ms(entry, field)
@@ -367,7 +406,11 @@ class FxMacroDataProvider:
 
         currency = request.currency.strip().upper()
         key = request.key.strip().lower()
-        url = f"{self.api_url}/announcements/{quote(currency)}/{quote(key)}"
+        if not _CURRENCY.fullmatch(currency):
+            raise ValueError(f"currency must be a three-letter code, got {request.currency!r}")
+        if not _INDICATOR.fullmatch(key):
+            raise ValueError(f"key must be an FXMacroData indicator slug, got {request.key!r}")
+        url = f"{self.api_url}/announcements/{quote(currency, safe='')}/{quote(key, safe='')}"
         params: dict[str, str | int] = {
             "start_date": _request_date(request.start_ms),
             "end_date": _request_date(request.end_ms - 1),
@@ -378,8 +421,14 @@ class FxMacroDataProvider:
         skipped: Counter[str] = Counter()
         observations: dict[tuple[int, int], MacroObservation] = {}
         first_page = True
+        pages = 0
 
         while True:
+            pages += 1
+            if pages > self.max_pages:
+                raise FxMacroDataDataError(
+                    f"response.pagination did not finish within max_pages={self.max_pages}"
+                )
             payload = await self._get_page(url, params)
             if first_page:
                 self._warn_on_access_limits(payload, request)
@@ -405,7 +454,11 @@ class FxMacroDataProvider:
                 record_unit = record.get("unit", page_unit)
                 unit = "unknown" if record_unit is None else _text(record_unit, "unit")
                 record_source = record.get("source", page_source)
-                source = self.name if record_source is None else _text(record_source, "source")
+                source = (
+                    self.name
+                    if record_source is None
+                    else f"{self.name}:{_text(record_source, 'source')}"
+                )
                 for vintage_at_ms, value in self._vintages(record, released_at_ms, skipped):
                     observations[(period_end_ms, vintage_at_ms)] = MacroObservation(
                         key=key,

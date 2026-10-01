@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Mapping
+import threading
+from collections.abc import Iterator, Mapping
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
@@ -17,6 +20,7 @@ from pineforge_data import (
     MacroObservation,
     MacroRequest,
 )
+from pineforge_data.providers.fxmacrodata import UrllibTransport
 
 FIXTURE = Path(__file__).parent / "fixtures" / "fxmacrodata_usd_non_farm_payrolls.json"
 START_MS = 1_775_001_600_000  # 2026-04-01
@@ -79,7 +83,7 @@ def test_fixture_pages_become_release_and_vintage_observations() -> None:
         (1_788_134_400_000, 1_788_525_000_000, 1_788_525_000_000, 159_075_000.0),
     ]
     assert {(o.key, o.currency, o.unit, o.source) for o in observations} == {
-        ("non_farm_payrolls", "USD", "Persons", "BLS")
+        ("non_farm_payrolls", "USD", "Persons", "fxmacrodata:BLS")
     }
     assert provider.last_skipped == {"unknown_release_time": 1, "assumed_release_time": 1}
 
@@ -246,3 +250,194 @@ def test_constructor_validation() -> None:
         FxMacroDataProvider(timeout_seconds=0)
     with pytest.raises(ValueError, match="max_retries"):
         FxMacroDataProvider(max_retries=-1)
+
+
+def test_empty_revisions_fall_back_to_the_record_value() -> None:
+    page = {
+        "data": [
+            {
+                "date": "2026-07-31",
+                "val": 4.1,
+                "announcement_datetime": 1_786_105_800,
+                "revisions": [],
+            }
+        ]
+    }
+    provider = FxMacroDataProvider(transport=FakeTransport([ok(page)]))
+
+    [observation] = fetch(provider)
+
+    assert (observation.vintage_at_ms, observation.value) == (1_786_105_800_000, 4.1)
+    assert provider.last_skipped == {}
+
+
+def test_legacy_snapshot_is_not_dated_by_its_epoch() -> None:
+    page = {
+        "data": [
+            {
+                "date": "2026-07-31",
+                "val": 2.0,
+                "announcement_datetime": 1_786_105_800,
+                "revisions": [
+                    {"epoch": 1_786_105_800, "val": 1.0},
+                    {"epoch": 1_786_105_800, "val": 2.0, "vintage_status": "legacy_snapshot"},
+                    {
+                        "epoch": 1_786_105_800,
+                        "val": 3.0,
+                        "vintage_status": "legacy_snapshot",
+                        "observed_at_ns": 1_789_000_000_000_000_000,
+                    },
+                ],
+            }
+        ]
+    }
+    provider = FxMacroDataProvider(transport=FakeTransport([ok(page)]))
+
+    assert [(o.vintage_at_ms, o.value) for o in fetch(provider)] == [
+        (1_786_105_800_000, 1.0),
+        (1_789_000_000_000, 3.0),
+    ]
+    assert provider.last_skipped == {"revision_without_vintage_time": 1}
+
+
+def test_page_ceiling_raises() -> None:
+    page = {
+        "pagination": {"has_more": True},
+        "data": [{"date": "2026-07-31", "val": 1.0, "announcement_datetime": 1_786_105_800}],
+    }
+    pages = [ok({**page, "pagination": {"has_more": True, "next_offset": n}}) for n in (1, 2, 3)]
+    provider = FxMacroDataProvider(max_pages=2, transport=FakeTransport(pages))
+
+    with pytest.raises(FxMacroDataDataError, match="max_pages=2"):
+        fetch(provider)
+
+
+def test_long_retry_after_falls_back_to_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
+    delays: list[float] = []
+
+    async def fake_sleep(delay: float) -> None:
+        delays.append(delay)
+
+    monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+    transport = FakeTransport(
+        [
+            FxMacroDataResponse(429, None, retry_after_seconds=86_400.0),
+            FxMacroDataResponse(503, None, retry_after_seconds=5.0),
+            ok({"data": []}),
+        ]
+    )
+
+    fetch(FxMacroDataProvider(retry_backoff_seconds=0.5, transport=transport))
+
+    assert delays == [0.5, 5.0]
+
+
+def test_key_is_redacted_from_server_error_text() -> None:
+    transport = FakeTransport([FxMacroDataResponse(401, {"detail": "invalid key placeholder-key"})])
+
+    with pytest.raises(FxMacroDataHTTPError) as exc:
+        fetch(FxMacroDataProvider(api_key="placeholder-key", transport=transport))
+
+    assert "placeholder-key" not in str(exc.value)
+    assert "[redacted]" in str(exc.value)
+
+
+@pytest.mark.parametrize(
+    ("currency", "key"),
+    [("US/D", "inflation"), ("USD", "../latest"), ("USD", "a/b"), ("USDX", "inflation")],
+)
+def test_currency_and_key_must_be_plain_identifiers(currency: str, key: str) -> None:
+    transport = FakeTransport([])
+    provider = FxMacroDataProvider(transport=transport)
+    request = MacroRequest(key=key, currency=currency, start_ms=START_MS, end_ms=END_MS)
+
+    with pytest.raises(ValueError):
+        asyncio.run(provider.fetch_observations(request))
+    assert transport.calls == []
+
+
+def test_withheld_releases_warn() -> None:
+    page = {"freemium_delay": {"applied": True, "withheld_count": 2}, "data": []}
+    provider = FxMacroDataProvider(transport=FakeTransport([ok(page)]))
+
+    with pytest.warns(FxMacroDataAccessWarning, match="2 release"):
+        fetch(provider)
+
+
+class _Handler(BaseHTTPRequestHandler):
+    seen: ClassVar[list[tuple[str, dict[str, str]]]] = []
+
+    def log_message(self, format: str, *args: object) -> None:
+        return None
+
+    def _send(self, status: int, body: bytes, headers: Mapping[str, str]) -> None:
+        self.send_response(status)
+        for name, value in headers.items():
+            self.send_header(name, value)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self) -> None:
+        _Handler.seen.append((self.path, {k.lower(): v for k, v in self.headers.items()}))
+        if self.path.startswith("/v1/ok"):
+            self._send(200, b'{"data": [1]}', {"Content-Type": "application/json"})
+        elif self.path.startswith("/v1/moved"):
+            self._send(302, b"", {"Location": "/elsewhere"})
+        elif self.path.startswith("/v1/busy"):
+            self._send(429, b'{"detail": "busy"}', {"Retry-After": "7"})
+        elif self.path.startswith("/v1/text"):
+            self._send(200, b"not json", {"Content-Type": "text/plain"})
+        else:
+            self._send(404, b"{}", {})
+
+
+@pytest.fixture
+def local_server() -> Iterator[str]:
+    _Handler.seen = []
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}/v1"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_urllib_transport_sends_headers_and_decodes_json(local_server: str) -> None:
+    transport = UrllibTransport(timeout_seconds=5)
+
+    response = asyncio.run(
+        transport.get(
+            f"{local_server}/ok",
+            params={"limit": 100, "offset": 0},
+            headers={"X-API-Key": "placeholder-key", "Accept": "application/json"},
+        )
+    )
+
+    assert (response.status, response.payload) == (200, {"data": [1]})
+    path, headers = _Handler.seen[0]
+    assert path == "/v1/ok?limit=100&offset=0"
+    assert headers["x-api-key"] == "placeholder-key"
+
+
+def test_urllib_transport_refuses_redirects(local_server: str) -> None:
+    provider = FxMacroDataProvider(api_key="placeholder-key", api_url=f"{local_server}/moved")
+    request = MacroRequest(key="inflation", currency="USD", start_ms=START_MS, end_ms=END_MS)
+
+    with pytest.raises(FxMacroDataHTTPError, match="HTTP 302"):
+        asyncio.run(provider.fetch_observations(request))
+    assert [path.split("?")[0] for path, _ in _Handler.seen] == [
+        "/v1/moved/announcements/USD/inflation"
+    ]
+
+
+def test_urllib_transport_reads_retry_after_and_tolerates_non_json(local_server: str) -> None:
+    transport = UrllibTransport(timeout_seconds=5)
+
+    busy = asyncio.run(transport.get(f"{local_server}/busy", params={}, headers={}))
+    text = asyncio.run(transport.get(f"{local_server}/text", params={}, headers={}))
+
+    assert (busy.status, busy.payload, busy.retry_after_seconds) == (429, {"detail": "busy"}, 7.0)
+    assert (text.status, text.payload) == (200, None)
